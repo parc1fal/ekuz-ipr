@@ -1,0 +1,22 @@
+# RL
+gymnasium
+stable-baselines3[extra]
+torch
+
+# Data handling
+pandas
+numpy
+scikit-learn
+
+# Sports data
+basketball-reference-scraper
+nba-api
+
+# Evaluation
+matplotlib
+seaborn
+jupyter
+
+# Utilities
+python-dotenv
+tqdm
