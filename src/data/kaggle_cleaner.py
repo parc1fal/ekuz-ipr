@@ -24,6 +24,7 @@ def load_and_split_by_season(raw_csv_path, season=None, regular_season=True):
     )
 
     df = df.sort_values("date").reset_index(drop=True)
+    df = clean_invalid_games(df)
     return df
 
 
