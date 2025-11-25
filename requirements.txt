@@ -20,3 +20,6 @@ jupyter
 # Utilities
 python-dotenv
 tqdm
+
+#experiment tracking
+wandb
