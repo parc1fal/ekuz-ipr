@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# EloBettingEnv — PPO agent, 15-feature enriched obs (ELO + EV + fatigue)
+# ---------------------------------------------------------------------------
+
+env:
+  name: elo
+
+data:
+  dir: data/features/enriched
+  filename_pattern: "season_{season}_enriched.csv"
+  train_seasons: [2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020]
+  test_seasons:  [2021, 2022, 2023]
+
+env_params:
+  initial_bankroll: 500.0
+  bet_size: 1.0
+  edge_threshold: 0.06     # |elo_market_residual| below this = no edge
+  no_edge_penalty: 0.5     # shaped-reward penalty for betting without edge
+
+agent:
+  algorithm: PPO
+  total_timesteps: 500000
+  n_steps: 1200          # ~one full season per rollout
+  n_epochs: 10
+  batch_size: 64
+  learning_rate: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01         # entropy bonus — encourages exploring skip
+  verbose: 1
+
+model:
+  save_path: experiments/elo_ppo_15feat_ev
+
+wandb:
+  project: nba-betting-rl
+  name: elo-ppo-15feat-ev
+  entity: null

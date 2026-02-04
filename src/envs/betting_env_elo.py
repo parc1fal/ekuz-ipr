@@ -8,15 +8,30 @@ import numpy as np
 import pandas as pd
 
 
+FATIGUE_COLS = [
+    "home_days_since_last", "away_days_since_last",
+    "home_is_back_to_back", "away_is_back_to_back",
+    "home_win_pct_last5",   "away_win_pct_last5",
+    "home_point_diff_last5", "away_point_diff_last5",
+]
+
+
 class EloBettingEnv(gym.Env):
     """
-    Betting environment with ELO features
+    Betting environment with ELO features and optional fatigue features.
 
-    State features:
-        - bankroll: Current bankroll
-        - home_ml: Home team money line odds
-        - away_ml: Away team money line odds
-        - elo_market_residual: elo_prob_home - ml_prob_home (edge signal)
+    Base observation (7 features):
+        - bankroll
+        - home_ml / away_ml
+        - elo_market_residual   (elo_prob_home - ml_prob_home)
+        - elo_prob_home
+        - elo_ev_home / elo_ev_away  (ELO-implied EV per $1 bet)
+
+    Extended observation (+8 fatigue features, auto-enabled when columns present):
+        - home/away_days_since_last
+        - home/away_is_back_to_back
+        - home/away_win_pct_last5
+        - home/away_point_diff_last5
 
     Actions: 0=Skip, 1=Bet Home, 2=Bet Away
     """
@@ -26,6 +41,8 @@ class EloBettingEnv(gym.Env):
         games_df: pd.DataFrame,
         initial_bankroll: float = 500.0,
         bet_size: float = 1.0,
+        edge_threshold: float = 0.0,
+        no_edge_penalty: float = 0.0,
     ):
         """
         Args:
@@ -34,12 +51,17 @@ class EloBettingEnv(gym.Env):
                                    score_home, score_away
             initial_bankroll: Starting bankroll
             bet_size: Fixed bet size (for now)
+            edge_threshold: |elo_market_residual| below which a bet is penalised
+            no_edge_penalty: Extra cost subtracted from shaped reward when betting
+                            without edge.  Does not affect bankroll — shaping only.
         """
         super().__init__()
 
         self.games = games_df.reset_index(drop=True)
         self.initial_bankroll = initial_bankroll
         self.bet_size = bet_size
+        self.edge_threshold = edge_threshold
+        self.no_edge_penalty = no_edge_penalty
 
         # Verify required columns exist
         required_cols = [
@@ -56,10 +78,11 @@ class EloBettingEnv(gym.Env):
         # Action space: 0=Skip, 1=Bet Home, 2=Bet Away
         self.action_space = gym.spaces.Discrete(3)
 
-        # State space: 4 features
-        # [bankroll, home_ml, away_ml, elo_market_residual]
+        # Auto-detect fatigue features; obs is 7 (base) or 15 (base + fatigue)
+        self.has_fatigue = all(col in self.games.columns for col in FATIGUE_COLS)
+        obs_dim = 15 if self.has_fatigue else 7
         self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
 
     def _calculate_market_features(self):
@@ -90,6 +113,18 @@ class EloBettingEnv(gym.Env):
             self.games["elo_prob_home"] - self.games["ml_prob_home"]
         )
 
+        # Payout multipliers (American odds → decimal win amount per $1 bet)
+        self.games["payout_home"] = self.games["home_ml"].apply(self._calculate_payout)
+        self.games["payout_away"] = self.games["away_ml"].apply(self._calculate_payout)
+
+        # ELO-implied expected value for each side
+        # EV = P(win)*payout - P(lose)  (per $1 wagered)
+        # Positive EV = profitable bet under the ELO model
+        elo_h = self.games["elo_prob_home"]
+        elo_a = 1 - elo_h
+        self.games["elo_ev_home"] = elo_h * self.games["payout_home"] - elo_a
+        self.games["elo_ev_away"] = elo_a * self.games["payout_away"] - elo_h
+
     def reset(self, seed=None, options=None):
         """Reset environment to start of season"""
         super().reset(seed=seed)
@@ -101,20 +136,35 @@ class EloBettingEnv(gym.Env):
 
     def _get_obs(self) -> np.ndarray:
         """Get current observation (state)"""
+        obs_dim = 15 if self.has_fatigue else 7
         if self.current_game_idx >= len(self.games):
-            return np.zeros(4, dtype=np.float32)
+            return np.zeros(obs_dim, dtype=np.float32)
 
         game = self.games.iloc[self.current_game_idx]
 
-        return np.array(
-            [
-                self.bankroll,
-                game["home_ml"],
-                game["away_ml"],
-                game["elo_market_residual"],
-            ],
-            dtype=np.float32,
-        )
+        obs = [
+            self.bankroll,
+            game["home_ml"],
+            game["away_ml"],
+            game["elo_market_residual"],
+            game["elo_prob_home"],
+            game["elo_ev_home"],
+            game["elo_ev_away"],
+        ]
+
+        if self.has_fatigue:
+            obs.extend([
+                game["home_days_since_last"],
+                game["away_days_since_last"],
+                game["home_is_back_to_back"],
+                game["away_is_back_to_back"],
+                game["home_win_pct_last5"],
+                game["away_win_pct_last5"],
+                game["home_point_diff_last5"],
+                game["away_point_diff_last5"],
+            ])
+
+        return np.array(obs, dtype=np.float32)
 
     def _calculate_payout(self, odds: float) -> float:
         """
@@ -152,10 +202,17 @@ class EloBettingEnv(gym.Env):
             else:
                 reward = -self.bet_size
 
-        # Update bankroll
+        # Bankroll tracks actual outcomes only
         self.bankroll += reward
 
-        # Record bet
+        # Reward shaping: penalise betting when edge is below threshold.
+        # Does not touch bankroll — ROI / stats remain ground-truth.
+        shaped_reward = reward
+        if action != 0 and self.no_edge_penalty > 0:
+            if abs(game["elo_market_residual"]) < self.edge_threshold:
+                shaped_reward -= self.no_edge_penalty
+
+        # Record bet (actual reward, not shaped)
         self.bet_history.append(
             {
                 "game_idx": self.current_game_idx,
@@ -176,7 +233,7 @@ class EloBettingEnv(gym.Env):
         terminated = self.current_game_idx >= len(self.games) or self.bankroll <= 0
         truncated = False
 
-        return self._get_obs(), reward, terminated, truncated, {}
+        return self._get_obs(), shaped_reward, terminated, truncated, {}
 
     def get_roi(self) -> float:
         """Calculate return on investment"""
