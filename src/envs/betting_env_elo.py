@@ -60,9 +60,6 @@ class EloBettingEnv(gym.Env):
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
 
-        # Calculate market-implied probabilities and residuals
-        self._calculate_market_features()
-
         # Action space: 0=Skip, 1=Bet Home, 2=Bet Away
         self.action_space = gym.spaces.Discrete(3)
 
@@ -72,8 +69,6 @@ class EloBettingEnv(gym.Env):
         self.observation_space = gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(9,), dtype=np.float32
         )
-
-        self.reset()
 
     def _calculate_market_features(self):
         """Calculate market-implied probabilities and ELO-market residual"""
@@ -112,6 +107,7 @@ class EloBettingEnv(gym.Env):
     def reset(self, seed=None, options=None):
         """Reset environment to start of season"""
         super().reset(seed=seed)
+        self._calculate_market_features()
         self.current_game_idx = 0
         self.bankroll = self.initial_bankroll
         self.bet_history = []

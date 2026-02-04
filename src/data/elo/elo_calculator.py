@@ -53,9 +53,9 @@ class NBAEloCalculator:
         mov = abs(score_diff)
 
         # Base multiplier increases with margin
-        multiplier = np.log(max(mov, 1) + 1) * (
-            2.2 / (1 if elo_diff < 0 else (elo_diff * 0.001 + 1))
-        )
+        # elo_diff must be winner - loser: negative when underdog wins (amplifies),
+        # positive when favorite wins (dampens)
+        multiplier = np.log(max(mov, 1) + 1) * (2.2 / (elo_diff * 0.001 + 1))
 
         return multiplier
 
@@ -73,9 +73,12 @@ class NBAEloCalculator:
 
         actual_home_win = 1.0 if home_score > away_score else 0.0
 
-        # Margin of victory multiplier
+        # Margin of victory multiplier — elo_diff must be winner minus loser
         score_diff = home_score - away_score
-        elo_diff = home_elo_pre - away_elo_pre
+        if home_score > away_score:
+            elo_diff = home_elo_pre - away_elo_pre
+        else:
+            elo_diff = away_elo_pre - home_elo_pre
         mov_mult = self._mov_multiplier(score_diff, elo_diff)
 
         # Rating changes

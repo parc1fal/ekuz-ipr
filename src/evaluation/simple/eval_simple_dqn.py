@@ -17,26 +17,26 @@ from stable_baselines3 import DQN
 
 # repo root is 3 directories up from this file
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
-from src.envs.simple_env import SimpleBettingEnv
+from src.envs.betting_env_elo import EloBettingEnv
 
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATA_DIR = "data/processed/kaggle"
+DATA_DIR = "data/features"
 TEST_SEASONS = [2021, 2022, 2023]
 
 INITIAL_BANKROLL = 500.0
 BET_SIZE = 1.0
 
-MODEL_SAVE_PATH = "experiments/simple_dqn_model"
+MODEL_SAVE_PATH = "experiments/simple_dqn_elo_model"
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 def load_season(season: int) -> pd.DataFrame:
-    path = os.path.join(DATA_DIR, f"season_{season}.csv")
+    path = os.path.join(DATA_DIR, f"season_{season}_elo.csv")
     df = pd.read_csv(path)
     print(f"  Loaded season {season}: {len(df)} games")
     return df
@@ -47,7 +47,7 @@ def load_season(season: int) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 def evaluate_policy(model, season_df, initial_bankroll, bet_size):
     """Run trained model deterministically on one season."""
-    env = SimpleBettingEnv(
+    env = EloBettingEnv(
         games_df=season_df, initial_bankroll=initial_bankroll, bet_size=bet_size
     )
     obs, _ = env.reset()
@@ -61,7 +61,7 @@ def evaluate_policy(model, season_df, initial_bankroll, bet_size):
 
 def evaluate_baseline(policy_fn, season_df, initial_bankroll, bet_size):
     """Run a simple policy function (obs -> action) on one season."""
-    env = SimpleBettingEnv(
+    env = EloBettingEnv(
         games_df=season_df, initial_bankroll=initial_bankroll, bet_size=bet_size
     )
     obs, _ = env.reset()

@@ -13,26 +13,26 @@ from stable_baselines3 import DQN
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.envs.simple_env import SimpleBettingEnv
+from src.envs.betting_env_elo import EloBettingEnv
 
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATA_DIR = "data/processed/kaggle"
+DATA_DIR = "data/features"
 TRAIN_SEASONS = list(range(2008, 2021))  # 2008 through 2020
 
 INITIAL_BANKROLL = 500.0
 BET_SIZE = 1.0
 
 TOTAL_TIMESTEPS = 100_000
-MODEL_SAVE_PATH = "experiments/simple_dqn_model"
+MODEL_SAVE_PATH = "experiments/simple_dqn_elo_model"
 
 
 # ---------------------------------------------------------------------------
 # Multi-season wrapper
 # ---------------------------------------------------------------------------
-class MultiSeasonWrapper(SimpleBettingEnv):
+class MultiSeasonWrapper(EloBettingEnv):
     """Cycles through a list of season DataFrames, one per episode."""
 
     def __init__(self, season_dfs, **kwargs):
@@ -50,7 +50,7 @@ class MultiSeasonWrapper(SimpleBettingEnv):
 # Data loading
 # ---------------------------------------------------------------------------
 def load_season(season: int) -> pd.DataFrame:
-    path = os.path.join(DATA_DIR, f"season_{season}.csv")
+    path = os.path.join(DATA_DIR, f"season_{season}_elo.csv")
     df = pd.read_csv(path)
     print(f"  Loaded season {season}: {len(df)} games")
     return df
