@@ -14,7 +14,12 @@ import numpy as np
 import pandas as pd
 import yaml
 import wandb
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
+
+ALGO_REGISTRY = {
+    "DQN": DQN,
+    "PPO": PPO,
+}
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.envs import get_env_class
@@ -116,8 +121,15 @@ def main():
     env_params = cfg["env_params"]
 
     # --- load model ---
-    print(f"\nLoading model from {cfg['model']['save_path']}...")
-    model = DQN.load(cfg["model"]["save_path"])
+    algo_name = cfg["agent"]["algorithm"]
+    if algo_name not in ALGO_REGISTRY:
+        raise ValueError(
+            f"Unsupported algorithm: '{algo_name}'. "
+            f"Available: {list(ALGO_REGISTRY.keys())}"
+        )
+
+    print(f"\nLoading {algo_name} model from {cfg['model']['save_path']}...")
+    model = ALGO_REGISTRY[algo_name].load(cfg["model"]["save_path"])
 
     # --- load test data ---
     print("\nLoading test data...")

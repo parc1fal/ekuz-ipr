@@ -1,5 +1,5 @@
 """
-Generic DQN training pipeline.
+Generic training pipeline (DQN, PPO, ...).
 
 Usage:
     python scripts/train.py configs/elo.yaml
@@ -13,9 +13,14 @@ import sys
 import pandas as pd
 import yaml
 import wandb
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from wandb.integration.sb3 import WandbCallback
+
+ALGO_REGISTRY = {
+    "DQN": DQN,
+    "PPO": PPO,
+}
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.envs import get_env_class
@@ -105,17 +110,20 @@ def main():
         lambda dfs=train_dfs: Wrapper(dfs, **env_params)
     ])
 
-    # --- DQN: everything under agent except algorithm + total_timesteps
+    # --- algorithm: everything under agent except algorithm + total_timesteps
     #     passes through directly to the SB3 constructor ---
+    algo_name = cfg["agent"]["algorithm"]
+    if algo_name not in ALGO_REGISTRY:
+        raise ValueError(
+            f"Unsupported algorithm: '{algo_name}'. "
+            f"Available: {list(ALGO_REGISTRY.keys())}"
+        )
     algo_cfg = {
         k: v for k, v in cfg["agent"].items()
         if k not in ("algorithm", "total_timesteps")
     }
-    assert cfg["agent"]["algorithm"] == "DQN", (
-        f"Unsupported algorithm: {cfg['agent']['algorithm']}"
-    )
 
-    model = DQN("MlpPolicy", env, **algo_cfg)
+    model = ALGO_REGISTRY[algo_name]("MlpPolicy", env, **algo_cfg)
     model.learn(
         total_timesteps=cfg["agent"]["total_timesteps"],
         callback=WandbCallback(),
