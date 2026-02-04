@@ -14,14 +14,9 @@ class EloBettingEnv(gym.Env):
 
     State features:
         - bankroll: Current bankroll
-        - home_elo_before: Home team ELO rating before game
-        - away_elo_before: Away team ELO rating before game
-        - elo_diff: home_elo - away_elo (positive = home favored by ELO)
-        - elo_prob_home: ELO-implied probability home wins
         - home_ml: Home team money line odds
         - away_ml: Away team money line odds
-        - ml_prob_home: Market-implied probability home wins
-        - elo_market_residual: elo_prob_home - ml_prob_home (KEY FEATURE)
+        - elo_market_residual: elo_prob_home - ml_prob_home (edge signal)
 
     Actions: 0=Skip, 1=Bet Home, 2=Bet Away
     """
@@ -35,8 +30,8 @@ class EloBettingEnv(gym.Env):
         """
         Args:
             games_df: DataFrame with ELO features and betting odds
-                     Must include: home_elo_before, away_elo_before, elo_prob_home,
-                                   home_ml, away_ml, score_home, score_away
+                     Must include: elo_prob_home, home_ml, away_ml,
+                                   score_home, score_away
             initial_bankroll: Starting bankroll
             bet_size: Fixed bet size (for now)
         """
@@ -48,8 +43,6 @@ class EloBettingEnv(gym.Env):
 
         # Verify required columns exist
         required_cols = [
-            "home_elo_before",
-            "away_elo_before",
             "elo_prob_home",
             "home_ml",
             "away_ml",
@@ -63,11 +56,10 @@ class EloBettingEnv(gym.Env):
         # Action space: 0=Skip, 1=Bet Home, 2=Bet Away
         self.action_space = gym.spaces.Discrete(3)
 
-        # State space: 9 features
-        # [bankroll, home_elo, away_elo, elo_diff, elo_prob_home,
-        #  home_ml, away_ml, ml_prob_home, elo_market_residual]
+        # State space: 4 features
+        # [bankroll, home_ml, away_ml, elo_market_residual]
         self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(9,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32
         )
 
     def _calculate_market_features(self):
@@ -98,12 +90,6 @@ class EloBettingEnv(gym.Env):
             self.games["elo_prob_home"] - self.games["ml_prob_home"]
         )
 
-        # Also calculate ELO diff if not present
-        if "elo_diff" not in self.games.columns:
-            self.games["elo_diff"] = (
-                self.games["home_elo_before"] - self.games["away_elo_before"]
-            )
-
     def reset(self, seed=None, options=None):
         """Reset environment to start of season"""
         super().reset(seed=seed)
@@ -116,20 +102,15 @@ class EloBettingEnv(gym.Env):
     def _get_obs(self) -> np.ndarray:
         """Get current observation (state)"""
         if self.current_game_idx >= len(self.games):
-            return np.zeros(9, dtype=np.float32)
+            return np.zeros(4, dtype=np.float32)
 
         game = self.games.iloc[self.current_game_idx]
 
         return np.array(
             [
                 self.bankroll,
-                game["home_elo_before"],
-                game["away_elo_before"],
-                game["elo_diff"],
-                game["elo_prob_home"],
                 game["home_ml"],
                 game["away_ml"],
-                game["ml_prob_home"],
                 game["elo_market_residual"],
             ],
             dtype=np.float32,
