@@ -1,9 +1,11 @@
 from src.envs.simple_env import SimpleBettingEnv
 from src.envs.betting_env_elo import EloBettingEnv
+from src.envs.betting_env_continuous import ContinuousBettingEnv
 
 ENV_REGISTRY = {
     "simple": SimpleBettingEnv,
     "elo": EloBettingEnv,
+    "elo_continuous": ContinuousBettingEnv,
 }
 
 

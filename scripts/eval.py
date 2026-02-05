@@ -10,6 +10,7 @@ import argparse
 import os
 import sys
 
+import gymnasium as gym
 import numpy as np
 import pandas as pd
 import yaml
@@ -79,12 +80,12 @@ def load_test_dfs(data_cfg: dict) -> dict:
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 def run_episode(env, action_fn) -> dict:
-    """Run one full episode. action_fn(obs) -> int. Returns bet statistics."""
+    """Run one full episode. action_fn(obs) -> action. Returns bet statistics."""
     obs, _ = env.reset()
     done = False
     while not done:
         action = action_fn(obs)
-        obs, reward, terminated, truncated, _ = env.step(int(action))
+        obs, reward, terminated, truncated, _ = env.step(action)
         done = terminated or truncated
     return env.get_bet_statistics()
 
@@ -96,7 +97,7 @@ def print_stats(label, stats):
     if not stats:
         print(f"  {label}: no bets recorded")
         return
-    print(
+    msg = (
         f"  {label}: "
         f"ROI={stats.get('roi', 0):.2f}%  "
         f"bets={stats.get('total_bets', 0)}  "
@@ -104,6 +105,9 @@ def print_stats(label, stats):
         f"profit={stats.get('total_profit', 0):.2f}  "
         f"bankroll={stats.get('final_bankroll', 0):.2f}"
     )
+    if "avg_wager" in stats:
+        msg += f"  avg_wager={stats['avg_wager']:.2f}"
+    print(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -146,60 +150,73 @@ def main():
         resume="allow",
     )
 
-    # --- evaluate ---
+    # --- detect action-space type from a probe env ---
+    first_season = cfg["data"]["test_seasons"][0]
+    _probe = env_class(games_df=test_dfs[first_season], **env_params)
+    continuous = isinstance(_probe.action_space, gym.spaces.Box)
+
+    # Baselines adapt to action-space type
     rng = np.random.default_rng(42)
-    all_roi = {"dqn": [], "random": [], "skip": []}
+    if continuous:
+        random_fn = lambda obs, _as=_probe.action_space: _as.sample()
+        skip_fn   = lambda obs: np.array([0.0], dtype=np.float32)
+    else:
+        random_fn = lambda obs, _rng=rng: _rng.integers(3)
+        skip_fn   = lambda obs: 0
+
+    algo_key = algo_name.lower()          # "dqn" | "ppo"
+    all_roi  = {"agent": [], "random": [], "skip": []}
 
     for season in cfg["data"]["test_seasons"]:
         print(f"\n--- Season {season} ---")
         df = test_dfs[season]
 
-        dqn_stats = run_episode(
+        agent_stats = run_episode(
             env_class(games_df=df, **env_params),
             lambda obs: model.predict(obs, deterministic=True)[0],
         )
         random_stats = run_episode(
             env_class(games_df=df, **env_params),
-            lambda obs, _rng=rng: _rng.integers(3),
+            random_fn,
         )
         skip_stats = run_episode(
             env_class(games_df=df, **env_params),
-            lambda obs: 0,
+            skip_fn,
         )
 
-        print_stats("DQN   ", dqn_stats)
-        print_stats("Random", random_stats)
-        print_stats("Skip  ", skip_stats)
+        print_stats(f"{algo_name:7s}", agent_stats)
+        print_stats("Random ", random_stats)
+        print_stats("Skip   ", skip_stats)
 
         wandb.log({
-            f"eval/season_{season}/dqn_roi":        dqn_stats.get("roi", 0),
-            f"eval/season_{season}/dqn_win_rate":   dqn_stats.get("win_rate", 0),
-            f"eval/season_{season}/dqn_total_bets": dqn_stats.get("total_bets", 0),
-            f"eval/season_{season}/dqn_profit":     dqn_stats.get("total_profit", 0),
-            f"eval/season_{season}/random_roi":     random_stats.get("roi", 0),
-            f"eval/season_{season}/skip_roi":       skip_stats.get("roi", 0),
+            f"eval/season_{season}/{algo_key}_roi":        agent_stats.get("roi", 0),
+            f"eval/season_{season}/{algo_key}_win_rate":   agent_stats.get("win_rate", 0),
+            f"eval/season_{season}/{algo_key}_total_bets": agent_stats.get("total_bets", 0),
+            f"eval/season_{season}/{algo_key}_profit":     agent_stats.get("total_profit", 0),
+            f"eval/season_{season}/random_roi":            random_stats.get("roi", 0),
+            f"eval/season_{season}/skip_roi":              skip_stats.get("roi", 0),
         })
 
-        all_roi["dqn"].append(dqn_stats.get("roi", 0))
+        all_roi["agent"].append(agent_stats.get("roi", 0))
         all_roi["random"].append(random_stats.get("roi", 0))
         all_roi["skip"].append(skip_stats.get("roi", 0))
 
     # --- summary ---
-    avg_dqn    = float(np.mean(all_roi["dqn"]))
+    avg_agent  = float(np.mean(all_roi["agent"]))
     avg_random = float(np.mean(all_roi["random"]))
     avg_skip   = float(np.mean(all_roi["skip"]))
 
     print(f"\n{'=' * 60}")
     print("  Summary — Average ROI across test seasons")
     print("=" * 60)
-    print(f"  DQN:    {avg_dqn:+.2f}%")
-    print(f"  Random: {avg_random:+.2f}%")
-    print(f"  Skip:   {avg_skip:+.2f}%")
+    print(f"  {algo_name:7s} {avg_agent:+.2f}%")
+    print(f"  Random  {avg_random:+.2f}%")
+    print(f"  Skip    {avg_skip:+.2f}%")
 
     wandb.log({
-        "eval/avg_roi_dqn":    avg_dqn,
-        "eval/avg_roi_random": avg_random,
-        "eval/avg_roi_skip":   avg_skip,
+        f"eval/avg_roi_{algo_key}": avg_agent,
+        "eval/avg_roi_random":     avg_random,
+        "eval/avg_roi_skip":       avg_skip,
     })
 
     wandb.finish()
