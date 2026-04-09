@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Averaged-DQN ensemble (Anschel et al., ICML 2017, Algorithm 2 + outer ensemble)
+# ---------------------------------------------------------------------------
+# Each seed saves a checkpoint every snapshot_freq steps during training.
+# At eval time, the last last_k_snapshots checkpoints are averaged per-seed
+# (Averaged-DQN), then those per-seed averaged Q-values are outer-ensembled.
+#
+# Stacks two variance reduction mechanisms from the same paper:
+#   - Within-run: snapshot averaging (reduces TAE variance accumulation)
+#   - Across-run: outer ensemble Q-averaging (reduces across-seed variance)
+# ---------------------------------------------------------------------------
+
+env:
+  name: elo_continuous
+
+data:
+  dir: data/features/enriched
+  filename_pattern: "season_{season}_enriched.csv"
+  train_seasons: [2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020]
+  test_seasons:  [2021, 2022, 2023]
+
+env_params:
+  initial_bankroll: 500.0
+  bet_size: 1.0
+  edge_threshold: 0.06
+  no_edge_penalty: 0.5
+  bet_tiers: [0.5, 1.0, 2.0]
+  risk_coeff: 0.1
+  ev_bonus: 1.0
+
+agent:
+  algorithm: DQN
+  total_timesteps: 200000
+  learning_starts: 1000
+  buffer_size: 50000
+  batch_size: 64
+  gamma: 0.99
+  tau: 0.01
+  exploration_fraction: 0.3
+  exploration_final_eps: 0.05
+  verbose: 1
+
+model:
+  save_path: experiments/ensemble_averaged_dqn
+
+ensemble:
+  seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  save_dir: experiments/ensemble_averaged_dqn
+  aggregation: averaged_dqn
+  snapshot_freq: 20000        # save checkpoint every 20k steps → 10 snapshots per 200k run
+  last_k_snapshots: 5         # average last 5 snapshots per model at inference
+  uncertainty_threshold: null
+
+wandb:
+  project: nba-betting-rl
+  name: ensemble-averaged-dqn
+  entity: null
