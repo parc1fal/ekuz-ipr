@@ -1,18 +1,15 @@
 """
-Evaluate an ensemble of DQN agents via Q-value averaging (Anschel 2017).
+Evaluate an ensemble of RL agents via Q-value averaging.
 
-Two modes controlled by ensemble.aggregation in config:
+Supports DQN (SB3 .zip) and CQL (d3rlpy .d3) models.
 
-  outer_ensemble   : K independently trained models, average Q-values (Anschel Alg 3 / MeanQ).
-                     Expects seed_*.zip files in save_dir.
-
-  averaged_dqn     : For each seed, average the last K snapshots from that seed's training run
-                     (Anschel Algorithm 2), then outer-ensemble across seeds.
-                     Expects seed_*/checkpoint_*.zip files in save_dir.
+Aggregation modes (ensemble.aggregation in config):
+  outer_ensemble : K independently trained models, average Q-values at inference.
+  averaged_dqn   : Per-seed snapshot averaging + outer ensemble (Anschel Alg 2).
 
 Usage:
-    WANDB_MODE=disabled python scripts/eval_ensemble.py configs/ensemble_dqn_tiered.yaml
-    WANDB_MODE=disabled python scripts/eval_ensemble.py configs/ensemble_averaged_dqn.yaml
+    WANDB_MODE=disabled python scripts/eval_ensemble.py configs/ensemble_elo_fatigue.yaml
+    WANDB_MODE=disabled python scripts/eval_ensemble.py configs/cql_elo_fatigue.yaml
 """
 
 import argparse
@@ -28,7 +25,7 @@ import yaml
 import wandb
 from stable_baselines3 import DQN, PPO
 
-ALGO_REGISTRY = {"DQN": DQN, "PPO": PPO}
+SB3_ALGO_REGISTRY = {"DQN": DQN, "PPO": PPO}
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.envs import get_env_class
@@ -126,9 +123,41 @@ def load_averaged_dqn_members(save_dir: str, algo_cls, last_k: int) -> list:
     return all_members
 
 
+def load_cql_ensemble(save_dir: str) -> list:
+    """Load seed_*.d3 CQL models → list of d3rlpy models."""
+    import d3rlpy
+    paths = sorted(glob.glob(os.path.join(save_dir, "seed_*.d3")))
+    if not paths:
+        raise FileNotFoundError(f"No seed_*.d3 found in {save_dir}")
+    models = []
+    for p in paths:
+        models.append(d3rlpy.load_learnable(p, device="cpu:0"))
+        print(f"  Loaded {os.path.basename(p)}")
+    return models
+
+
 # ---------------------------------------------------------------------------
 # Inference
 # ---------------------------------------------------------------------------
+def cql_q_average_action(models: list, obs, n_actions: int = 3, uncertainty_threshold=None) -> int:
+    """Average Q-values across K CQL (d3rlpy) models via predict_value."""
+    obs_batch = np.expand_dims(obs, 0).astype(np.float32)
+    all_q = []
+    for m in models:
+        q = [m.predict_value(obs_batch, np.array([a]))[0] for a in range(n_actions)]
+        all_q.append(q)
+    all_q = np.array(all_q)  # (K, n_actions)
+    mean_q = all_q.mean(axis=0)
+    best = int(np.argmax(mean_q))
+
+    if uncertainty_threshold is not None and best != 0:
+        std_q = all_q.std(axis=0)
+        if std_q[best] > uncertainty_threshold:
+            return 0
+
+    return best
+
+
 def q_average_action(models: list, obs, uncertainty_threshold=None) -> int:
     """Anschel Alg 3 / MeanQ: average Q-values across K models, act greedy on mean."""
     obs_t = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
@@ -219,17 +248,25 @@ def main():
 
     env_class = get_env_class(cfg["env"]["name"])
     env_params = cfg["env_params"]
-    algo_cls = ALGO_REGISTRY[cfg["agent"]["algorithm"]]
+    algo_name = cfg["agent"]["algorithm"]
+    is_cql = algo_name == "CQL"
 
-    print(f"\nAggregation mode: {aggregation}")
+    print(f"\nAlgorithm: {algo_name}")
+    print(f"Aggregation mode: {aggregation}")
 
     # --- load models ---
     print(f"\nLoading ensemble from {save_dir}/...")
-    if aggregation == "averaged_dqn":
+    if is_cql:
+        models = load_cql_ensemble(save_dir)
+        K = len(models)
+        print(f"  CQL ensemble size: K={K}")
+    elif aggregation == "averaged_dqn":
+        algo_cls = SB3_ALGO_REGISTRY[algo_name]
         members = load_averaged_dqn_members(save_dir, algo_cls, last_k)
         K = len(members)
         print(f"  Outer ensemble size: K={K}  (each with up to {last_k} snapshots)")
     else:
+        algo_cls = SB3_ALGO_REGISTRY[algo_name]
         models = load_outer_ensemble(save_dir, algo_cls)
         K = len(models)
         print(f"  Ensemble size: K={K}")
@@ -264,10 +301,12 @@ def main():
         skip_fn = lambda obs: 0
 
     # --- build action function ---
-    if aggregation == "averaged_dqn":
+    if is_cql:
+        action_fn = lambda obs: cql_q_average_action(models, obs, uncertainty_threshold=uncertainty_threshold)
+        individual_models = models
+    elif aggregation == "averaged_dqn":
         action_fn = lambda obs: averaged_dqn_action(members, obs, uncertainty_threshold)
-        # individual model ROIs: use final model per seed (first snapshot in each member)
-        individual_models = [snaps[-1] for snaps in members]  # final checkpoint per seed
+        individual_models = [snaps[-1] for snaps in members]
     else:
         action_fn = lambda obs: q_average_action(models, obs, uncertainty_threshold)
         individual_models = models
@@ -288,9 +327,13 @@ def main():
 
         ind_season_rois = []
         for i, model in enumerate(individual_models):
+            if is_cql:
+                ind_action_fn = lambda obs, m=model: m.predict(np.expand_dims(obs, 0).astype(np.float32))[0]
+            else:
+                ind_action_fn = lambda obs, m=model: m.predict(obs, deterministic=True)[0]
             stats = run_episode(
                 env_class(games_df=df, **env_params),
-                lambda obs, m=model: m.predict(obs, deterministic=True)[0],
+                ind_action_fn,
             )
             roi = stats.get("roi", 0)
             ind_season_rois.append(roi)

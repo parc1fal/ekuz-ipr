@@ -15,6 +15,13 @@ FATIGUE_COLS = [
     "home_point_diff_last5", "away_point_diff_last5",
 ]
 
+LINEUP_COLS = [
+    "home_lineup_delta", "away_lineup_delta",
+    "lineup_ppg_diff", "lineup_rpg_diff",
+    "lineup_bpg_diff", "lineup_apg_diff",
+    "height_diff",
+]
+
 
 class EloBettingEnv(gym.Env):
     """
@@ -78,9 +85,14 @@ class EloBettingEnv(gym.Env):
         # Action space: 0=Skip, 1=Bet Home, 2=Bet Away
         self.action_space = gym.spaces.Discrete(3)
 
-        # Auto-detect fatigue features; obs is 7 (base) or 15 (base + fatigue)
+        # Auto-detect optional feature sets; obs is 7 (base) + 8 (fatigue) + 7 (lineup)
         self.has_fatigue = all(col in self.games.columns for col in FATIGUE_COLS)
-        obs_dim = 15 if self.has_fatigue else 7
+        self.has_lineup = all(col in self.games.columns for col in LINEUP_COLS)
+        obs_dim = 7
+        if self.has_fatigue:
+            obs_dim += 8
+        if self.has_lineup:
+            obs_dim += 7
         self.observation_space = gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -136,7 +148,7 @@ class EloBettingEnv(gym.Env):
 
     def _get_obs(self) -> np.ndarray:
         """Get current observation (state)"""
-        obs_dim = 15 if self.has_fatigue else 7
+        obs_dim = self.observation_space.shape[0]
         if self.current_game_idx >= len(self.games):
             return np.zeros(obs_dim, dtype=np.float32)
 
@@ -163,6 +175,9 @@ class EloBettingEnv(gym.Env):
                 game["home_point_diff_last5"],
                 game["away_point_diff_last5"],
             ])
+
+        if self.has_lineup:
+            obs.extend([game[col] for col in LINEUP_COLS])
 
         return np.array(obs, dtype=np.float32)
 

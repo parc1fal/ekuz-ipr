@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# CQL with lineup features (22-dim observation: 7 ELO + 8 fatigue + 7 lineup)
+# ---------------------------------------------------------------------------
+
+env:
+  name: elo
+
+data:
+  dir: data/features/lineup
+  filename_pattern: "season_{season}_lineup.csv"
+  train_seasons: [2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020]
+  test_seasons:  [2021, 2022, 2023]
+
+env_params:
+  initial_bankroll: 500.0
+  bet_size: 1.0
+  edge_threshold: 0.06
+  no_edge_penalty: 0.5
+
+agent:
+  algorithm: CQL
+
+cql:
+  learning_rate: 6.25e-5
+  batch_size: 64
+  gamma: 0.99
+  alpha: 5.0
+  target_update_interval: 8000
+  n_critics: 1
+  n_steps: 50000
+  n_steps_per_epoch: 5000
+
+offline_data:
+  save_path: data/offline/dqn_policy_lineup.npz
+  policy: dqn
+  dqn_model_path: experiments/cql_elo_lineup_behavioral
+  seed: 42
+
+model:
+  save_path: experiments/cql_elo_lineup
+
+ensemble:
+  seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  save_dir: experiments/cql_ensemble_lineup
+  aggregation: outer_ensemble
+  uncertainty_threshold: null
+
+wandb:
+  project: nba-betting-rl
+  name: cql-elo-lineup
+  entity: null
